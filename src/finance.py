@@ -5,7 +5,7 @@ from tkinter import ttk
 import sqlite3
 import sv_ttk
 
-# CREATES AN EXCEL FILE CONTAINING SP500 TICKERS ON FIRST CALL THEN REFS IT FOR FOLLOWING CALLS
+#  INFO: CREATES AN EXCEL FILE CONTAINING SP500 TICKERS ON FIRST CALL THEN REFS IT FOR FOLLOWING CALLS
 def get_tickers():
     try:
         with open('tickers.xlsx', 'rb') as file :
@@ -16,40 +16,31 @@ def get_tickers():
         tickers = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
         tickers['Symbol'].to_excel('tickers.xlsx')
 
-    return tickers['Symbol'].tolist()
+    return tickers['Symbol'].convert_dtypes(convert_string=True).tolist()
 
-def create_tables(db, input_tickers):
-    for i in input_tickers['Symbol'].tolist() :
-        data = yf.Ticker(i.replace('.','-')).history(
-            period="1yr", interval="1d", actions=False, rounding=True)
-        data.drop(columns='Volume', inplace=True)
-        data.reset_index(inplace=True)
-        data['Datetime'] = data['Date'].dt.date
-        data.to_sql(i, conn, schema=None, if_exists='replace', index=False)
 
-def get_output_types() :
-    output = [outputList.get(i) for i in outputList.curselection()]
-    return output
+#  INFO: GENERAL GUI FUNCTIONS
 
 def filter_list(input_list, input_filter) :
-    output_list = [x for x in input_list if x.startswith(input_filter)]
-    update_listbox(output_list, tickersSearchList)
+    drop_calc_list = [x for x in input_list if x.startswith(input_filter)]
+    update_listbox(drop_calc_list, tickers_search_tree)
 
 def add_tickers() :
-    for i in tickersSearchList.curselection() :
-        selected_tickers.add(tickersSearchList.get(i))
-    update_listbox(selected_tickers, tickersSelectedList)
-    tickersSearchList.selection_clear(0, tk.END)
+    for each in tickers_search_tree.selection() :
+        selected_tickers.add(str(tickers_search_tree.item(each)['text']))
+    update_listbox(selected_tickers, tickers_selected_tree)
+    tickers_search_tree.selection_remove(*tickers_search_tree.selection())
 
 def sub_tickers() :
-    for i in tickersSelectedList.curselection() :
-        selected_tickers.remove(tickersSelectedList.get(i))
-    update_listbox(selected_tickers, tickersSelectedList)
+    for each in tickers_selected_tree.selection() :
+        selected_tickers.remove(str(tickers_selected_tree.item(each)['text']))
+    update_listbox(selected_tickers, tickers_selected_tree)
 
 def update_listbox(input_list, input_listbox) :
-    input_listbox.delete(0, tk.END)
+    input_listbox.delete(*input_listbox.get_children())
     for i in sorted(input_list) :
-        input_listbox.insert(tk.END, i)
+        input_listbox.insert('', 'end', text=i)
+    input_listbox.update()
 
 def entry_default_text(input_strvar, input_text) :
     if (input_strvar.get() == '') :
@@ -57,108 +48,212 @@ def entry_default_text(input_strvar, input_text) :
     elif (input_strvar.get() == input_text) :
         input_strvar.set('')
 
+def toggle_recovery() :
+    if (recovery_check.get() == True) :
+        recovery_spinbox.config(state=tk.NORMAL)
+    else :
+        recovery_spinbox.config(state=tk.DISABLED)
+
+#  INFO: CALCULATION CONTROLLER
+def run_calculations(input_dataframe) :
+    calc_choice = calculation_combobox.get()        #  HACK: Currently only accepts 1 calculation selection
+    if (calc_choice == 'Consecutive Drop %') :
+        cumulative_drop_calc(input_dataframe)
+
+
+#  INFO: CUMULATIVE DROP CALCULATION
+def cumulative_drop_calc(input_dataframe) :
+
+    #  TODO: This could be cleaner and more readable
+    calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
+    calc['is_lt'] = input_dataframe['Close'].diff().lt(0)           #  WARN: .lt(0) : detects any downward change in price with no minimum req
+    dif_check = calc['is_lt'].cumsum().where(calc['is_lt'], 0).eq(0)
+    calc['cumul_sum'] = dif_check.groupby(dif_check.cumsum()).cumcount()
+    calc['drop_list_index'] = pd.Series(calc.loc[calc['cumul_sum'] == 3].index)  #  FIX: 3 is hard coded for third consecutive drop, also ignores further drops
+
+    diff_list = list()
+    for i in [x for x in calc['drop_list_index'] if x == x] :         #  NOTE: (if x==x) : removes NaN values
+        diff_list.append(1 - (1 / pow(input_dataframe.at[i-3, 'Close'] / input_dataframe.at[i, 'Close'], 1/3)))
+    calc['diff'] = pd.Series(data=diff_list)
+
+    drop_calc_list = list()
+    for i in range(len(diff_list)) :
+        drop_datetime = str(input_dataframe.loc[calc.at[i, 'drop_list_index']].iat[0])
+        if interval_combobox.get() in ['1d', '5d', '1wk', '1mo', '3mo'] :
+            drop_datetime = drop_datetime[:drop_datetime.rfind(' 00:00:00')]        #  NOTE: strips unnecessary time info if [period >= 1d]
+        drop_amount = calc.at[i, 'diff'].round(5)
+        drop_calc_list.append(str(drop_datetime) + ' / ' + str(drop_amount))
+
+    input_dataframe['Cumulative Drop %'] = pd.Series(drop_calc_list)
+
+    #  INFO: OPTIONAL RECOVERY CALCULATION
+    if (recovery_check.get() == True) :
+        recovery_list = list()
+        for i in [x for x in calc['drop_list_index'] if x == x] :     #  NOTE: (if x==x) : removes NaN values
+            start_value = input_dataframe.iat[int(i) - 3, 4]    #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
+            recovery_goal = start_value * (float(recovery_spinbox.get()) / 100)
+            recovery_index = input_dataframe.iloc[int(i)+1:, 4].cummax().ge(recovery_goal).idxmax()  
+            if (input_dataframe.iat[recovery_index, 4] >= recovery_goal) :  #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
+                recovery_list.append(input_dataframe.iat[recovery_index, 0])
+            else :
+                recovery_list.append('NO RECOVERY FOUND')
+        input_dataframe['Recovery'] = pd.Series(recovery_list)
+            
+
+
+#  INFO: FILE EXPORTING
 def export_output() :
+    export_progressbar.configure(maximum=(len(selected_tickers) + 0.001))
+    export_progressbar['value'] = 0
+
+    if (xlsx_check.get() == True) : excel_writer = pd.ExcelWriter('output.xlsx')
+
+    #  INFO: TICKER INFO REQUEST
     for i in selected_tickers :
-        data = yf.Ticker(i.replace('.','-')).history(
-            period=periodBox.get(), interval=intervalBox.get(), actions=False, rounding=True)
+        #  TODO: Option for Start/End manual entry
+        data = yf.Ticker(i.replace('.','-')).history(  #  NOTE: i.replace('.','-') : YFinance uses - instead of . in ticker name
+                     period=period_combobox.get(), interval=interval_combobox.get(), actions=False, rounding=True)
+
+        #  INFO: DATA TRIMMING
         data.drop(columns='Volume', inplace=True)
         data.reset_index(inplace=True)
-        data['Datetime'] = data['Datetime'].dt.date
+        data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
+        run_calculations(data)
         print(data)
 
-    # if (db_check.get() == True) :
-    #     data.to_sql(i, conn, schema=None, if_exists='replace', index=False)
-    #
-    # if(xls_check.get() == True) :
-    #     data.to_excel('output.xlsx')
+        export_progressbar.step(1)
+        root.update_idletasks()
 
-    # if (text_check.get() == True) :
+        #  INFO: EXPORT FILE TYPE CHECKS
+        if (db_check.get() == True) :
+            data.to_sql(i, conn, schema=None, if_exists='replace', index=False)
 
+        if(xlsx_check.get() == True) :
+            data.to_excel(excel_writer, sheet_name=i, index=False)
+
+        # if (text_check.get() == True) :
+
+
+    if (xlsx_check.get() == True) : excel_writer.close()
+
+
+#  INFO: SQLite INIT
 conn = sqlite3.connect('output.db')
 cursor = conn.cursor()
 
+#  INFO: YFinance values
 selected_tickers = set()
-export_values = ['Excel', 'Database', 'Text']
 interval_values = ['1m', '2m', '5m', '15m', '30m', '1h', '90m', '1d', '5d', '1wk', '1mo', '3mo']
 period_values = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'YTD', 'MAX']
+calculation_values = ['Consecutive Drop %']
 
+#  INFO: TICKER INFO REQUEST
 tickers = get_tickers()
 tickers.sort()
 
+#  INFO: GUI ROOT INIT
 root = tk.Tk()
 root.title('Stock Database')
-root.geometry('500x650')
+root.geometry('600x650')
+sv_ttk.set_theme('dark')
 
-# interval_value = tk.StringVar()
-# period_value = tk.StringVar()
+#  INFO: GUI Variable INIT
+search_text = tk.StringVar()
 start_value = tk.StringVar()
 end_value = tk.StringVar()
+recovery_value = tk.IntVar()
+db_check = tk.BooleanVar()
+xlsx_check = tk.BooleanVar()
+text_check = tk.BooleanVar()
+recovery_check = tk.BooleanVar()
+search_text.set('Search tickers')
 start_value.set('YYYY-MM-DD')
 end_value.set('YYYY-MM-DD')
+recovery_value.set(100.0)
 
-db_check = tk.BooleanVar()
-xls_check = tk.BooleanVar()
-text_check = tk.BooleanVar()
+#  INFO: GUI : Frames
+selection_frame = ttk.Frame(root)
+options_frame = ttk.Frame(root)
+calculation_frame = ttk.Frame(root)
+export_frame = ttk.Frame(root)
+selection_frame.grid(row=0, column=0, padx=10, pady=(15,0))
+options_frame.grid(row=1, column=0, pady=(30, 0))
+calculation_frame.grid(row=2, column=0, pady=30)
+export_frame.grid(row=3, column=0, pady=30)
 
-searchWindow = tk.PanedWindow(root)
-selectWindow = tk.PanedWindow(root)
-optionsWindow = tk.PanedWindow(root)
-exportWindow = tk.PanedWindow(root)
-searchWindow.grid(row=0, column=0, padx=10)
-selectWindow.grid(row=0, column=1, padx=10)
-optionsWindow.grid(row=1, column=0, columnspan=2, pady=(10, 0))
-exportWindow.grid(row=2, column=0, columnspan=2, pady=20)
+#  INFO: GUI : Ticker search and selection
+tickers_search_entry = ttk.Entry(selection_frame, textvariable=search_text, width=15)
+tickers_add_button = ttk.Button(selection_frame, text='->', width=2, command=add_tickers)
+tickers_remove_button = ttk.Button(selection_frame, text='<-', width=2, command=sub_tickers)
+selected_text_label = ttk.Label(selection_frame, text='Selected')
+tickers_search_tree = ttk.Treeview(selection_frame, selectmode='extended', show='tree')
+tickers_selected_tree = ttk.Treeview(selection_frame, selectmode='extended', show='tree')
+tickers_scrollbar = ttk.Scrollbar(selection_frame, orient='vertical')
+tickers_search_entry.grid(row=0, column=0, padx=(35,0), pady=5)
+tickers_search_tree.grid(row=1, column=0, columnspan=2, padx=(15, 45))
+tickers_scrollbar.grid(row=1, column=1, sticky='ns', padx=(20, 0))
+tickers_selected_tree.grid(row=1, column=2, columnspan=2, padx=(15, 15))
+selected_text_label.grid(row=0, column=2, rowspan=2, sticky='wn', padx=(30,0), pady=(32,0))
+selected_text_label.lift()
+tickers_add_button.grid(row=1, column=1, padx=(100, 0), pady=(0,90))
+tickers_remove_button.grid(row=1, column=1, padx=(100, 0), pady=(90,0))
+tickers_search_entry.bind('<FocusIn>', lambda f: entry_default_text(search_text, 'Search tickers'))
+tickers_search_entry.bind('<FocusOut>', lambda f: entry_default_text(search_text, 'Search tickers'))
+tickers_search_entry.bind('<KeyRelease>', lambda f: filter_list(tickers, tickers_search_entry.get().upper()))
+for i in tickers :      #  NOTE: Ticker search list insertion
+    tickers_search_tree.insert('', 'end', text=i)
+tickers_scrollbar.config(command=tickers_search_tree.yview)
+tickers_search_tree.config(yscrollcommand=tickers_scrollbar.set)
 
-tickersSearch = ttk.Entry(searchWindow, width=14)
-tickersAdd = ttk.Button(searchWindow, text='+', width=2, command=add_tickers)
-tickersRemove = ttk.Button(selectWindow, text='-', width=2, command=sub_tickers)
-selectedText = tk.Label(selectWindow, text='Selected')
-tickersSearchList = tk.Listbox(searchWindow, selectmode=tk.MULTIPLE)
-tickersSelectedList = tk.Listbox(selectWindow, selectmode=tk.MULTIPLE)
-tickersSearch.grid(row=0, column=0, padx=5, pady=(15, 0), sticky='W')
-tickersAdd.grid(row=0, column=1, padx=(5, 0), pady=(15, 0))
-tickersSearchList.grid(row=1, column=0, columnspan=2, padx=15, pady=(2, 15))
-tickersSelectedList.grid(row=1, column=1, padx=15, pady=(2, 15))
-selectedText.grid(row=0, column=1, padx=(25, 25), pady=(15, 2), sticky='W')
-tickersRemove.grid(row=0, column=1, padx=(120, 0), pady=(15, 0))
-tickersSearch.bind('<KeyRelease>', lambda f: filter_list(tickers, tickersSearch.get().upper()))
-for i in tickers :
-    tickersSearchList.insert(tickers.index(i), i)
+#  INFO: GUI : YFinance Interval and Period selection
+interval_label = ttk.Label(options_frame, text='Interval')
+period_label = ttk.Label(options_frame, text='Period')
+start_label = ttk.Label(options_frame, text='Start')
+end_label = ttk.Label(options_frame, text='End')
+interval_combobox = ttk.Combobox(options_frame, value=interval_values, state='readonly', width=5)
+period_combobox = ttk.Combobox(options_frame, value=period_values, state='readonly', width=5)
+start_entry = ttk.Entry(options_frame, width=12, textvariable=start_value)
+end_entry = ttk.Entry(options_frame, width=12, textvariable=end_value)
+interval_label.grid(row=0, column=0, padx=(5, 20))
+period_label.grid(row=0, column=1, padx=(0, 60))
+start_label.grid(row=0, column=2, padx=(35, 20))
+end_label.grid(row=1, column=2, padx=(35, 20))
+interval_combobox.grid(row=1, column=0, padx=(5,20))
+period_combobox.grid(row=1, column=1, padx=(0,60))
+start_entry.grid(row=0, column=3)
+end_entry.grid(row=1, column=3)
+interval_combobox.bind('<<ComboboxSelected>>', lambda e: interval_combobox.selection_clear())
+period_combobox.bind('<<ComboboxSelected>>', lambda e: period_combobox.selection_clear())
+start_entry.bind('<FocusIn>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
+end_entry.bind('<FocusIn>', lambda f: entry_default_text(end_value, 'YYYY-MM-DD'))
+start_entry.bind('<FocusOut>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
+end_entry.bind('<FocusOut>', lambda f: entry_default_text(end_value, 'YYYY-MM-DD'))
+#  TODO: START / END disable by default
 
-intervalLabel = ttk.Label(optionsWindow, text='Interval')
-periodLabel = ttk.Label(optionsWindow, text='Period')
-startLabel = ttk.Label(optionsWindow, text='Start')
-endLabel = ttk.Label(optionsWindow, text='End')
-intervalBox = ttk.Combobox(optionsWindow, value=interval_values, state='readonly', width=5)
-periodBox = ttk.Combobox(optionsWindow, value=period_values, state='readonly', width=5)
-startEntry = ttk.Entry(optionsWindow, width=10, textvariable=start_value)
-endEntry = ttk.Entry(optionsWindow, width=10, textvariable=end_value)
-intervalLabel.grid(row=0, column=0, padx=(20, 30))
-periodLabel.grid(row=0, column=1, padx=(10, 50))
-startLabel.grid(row=0, column=2, padx=(20, 20))
-endLabel.grid(row=0, column=3, padx=(20, 30))
-intervalBox.grid(row=1, column=0)
-periodBox.grid(row=1, column=1)
-startEntry.grid(row=1, column=2)
-endEntry.grid(row=1, column=3)
-intervalBox.bind('<<ComboboxSelected>>', lambda e: intervalBox.selection_clear())
-periodBox.bind('<<ComboboxSelected>>', lambda e: periodBox.selection_clear())
-startEntry.bind('<FocusIn>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
-endEntry.bind('<FocusIn>', lambda f: entry_default_text(end_value, 'YYYY-MM-DD'))
-startEntry.bind('<FocusOut>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
-endEntry.bind('<FocusOut>', lambda f: entry_default_text(end_value, 'YYYY-MM-DD'))
+#  INFO: GUI : Calculation selection and options
+calculation_label = ttk.Label(calculation_frame, text='Calculation')
+calculation_combobox = ttk.Combobox(calculation_frame, value=calculation_values, state='readonly', width=18)
+recovery_checkbutton = ttk.Checkbutton(calculation_frame, text='Recovery', variable=recovery_check, command=toggle_recovery)
+recovery_spinbox = ttk.Spinbox(calculation_frame, from_=1.0, to=200.0, state='readonly', textvariable=recovery_value, width=10,
+                                command= lambda : recovery_spinbox.selection_clear())
+calculation_label.grid(row=0, column=0, padx=(5,45))
+calculation_combobox.grid(row=1, column=0, padx=(5,45))
+recovery_checkbutton.grid(row=0, column=1, padx=(65,0))
+recovery_spinbox.grid(row=1, column=1, padx=(65,0))
+calculation_combobox.bind('<<ComboboxSelected>>', lambda e: calculation_combobox.selection_clear())
+
+#  INFO: GUI : Export selection
+database_checkbutton = ttk.Checkbutton(export_frame, text='DATABASE', variable=db_check)
+xlsx_checkbutton = ttk.Checkbutton(export_frame, text='EXCEL', variable=xlsx_check)
+text_checkbutton = ttk.Checkbutton(export_frame, text='TEXT', variable=text_check)
+export_button = ttk.Button(export_frame, text='Export', command=export_output)
+export_progressbar = ttk.Progressbar(export_frame, length=400, mode='determinate')
+database_checkbutton.grid(row=0, column=0)
+xlsx_checkbutton.grid(row=0, column=1)
+text_checkbutton.grid(row=0, column=2)
+export_button.grid(row=0, column=3)
+export_progressbar.grid(row=1, column=0, columnspan=4, pady=(20, 10))
 
 
-databaseCheck = ttk.Checkbutton(exportWindow, text='DataBase', variable=db_check)
-xlsCheck = ttk.Checkbutton(exportWindow, text='EXCEL', variable=xls_check)
-textCheck = ttk.Checkbutton(exportWindow, text='TEXT', variable=text_check)
-exportButton = ttk.Button(exportWindow, text='Export', command=export_output)
-progressBar = ttk.Progressbar(exportWindow, length=400)
-databaseCheck.grid(row=0, column=0)
-xlsCheck.grid(row=0, column=1)
-textCheck.grid(row=0, column=2)
-exportButton.grid(row=0, column=3)
-progressBar.grid(row=1, column=0, columnspan=4, pady=(20, 10))
-
-sv_ttk.set_theme('dark')
+#  INFO: GUI : MAIN EVENT LOOP
 root.mainloop()
