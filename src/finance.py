@@ -56,8 +56,17 @@ def toggle_recovery() :
         recovery_spinbox.config(state=tk.DISABLED)
 
 def filter_periodbox() :
-    if (interval_combobox.get() in ['1m', '2m', '5m', '15m', '30m', '1hr', '90m']) :
-        period_combobox.set('1d')
+    if (interval_combobox.get() == '1m') :
+        period_combobox.set('')
+        period_combobox['values'] = ['1d']
+    elif (interval_combobox.get() == '1h') :
+        period_combobox.set('')
+        period_combobox['values'] = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y']
+    elif (interval_combobox.get() in ['2m', '5m', '15m', '30m', '90m']) :
+        period_combobox.set('')
+        period_combobox['values'] = ['1d', '5d', '1mo']
+    else :
+        period_combobox['values'] = period_values
 
 #  INFO: CALCULATION CONTROLLER
 def run_calculations(input_dataframe) :
@@ -127,20 +136,23 @@ def export_output() :
     #  INFO: TICKER INFO REQUEST
     for i in sorted(selected_tickers) :
         #  TODO: Option for Start/End manual entry
-        if (start_entry.get() == 'YYYY-MM-DD' and end_entry.get() == 'YYYY-MM-DD') :
-            data = yf.Ticker(i.replace('.','-')).history(  #  NOTE: i.replace('.','-') : YFinance uses - instead of . in ticker name
-                         interval=interval_combobox.get(), period=period_combobox.get(), actions=False, rounding=True)
-        elif (start_entry.get() != '' and end_entry.get() != '') :
-            data = yf.Ticker(i.replace('.','-')).history(
-                        interval=interval_combobox.get(), start=start_entry.get(), end=end_entry.get(), actions=False, rounding=True)
+        try :
+            if (start_entry.get() == 'YYYY-MM-DD' and end_entry.get() == 'YYYY-MM-DD') :
+                data = yf.Ticker(i.replace('.','-')).history(  #  NOTE: i.replace('.','-') : YFinance uses - instead of . in ticker name
+                             interval=interval_combobox.get(), period=period_combobox.get(), actions=False, rounding=True)
+            elif (start_entry.get() != '' and end_entry.get() != '') :
+                data = yf.Ticker(i.replace('.','-')).history(
+                            interval=interval_combobox.get(), start=start_entry.get(), end=end_entry.get(), actions=False, rounding=True)
 
-        #  INFO: DATA TRIMMING
-        data.drop(columns='Volume', inplace=True)
-        data.reset_index(inplace=True)
-        data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
-        run_calculations(data)
-        print(i + '\n')
-        print(data)
+            #  INFO: DATA TRIMMING
+            data.drop(columns='Volume', inplace=True)
+            data.reset_index(inplace=True)
+            data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
+            run_calculations(data)
+            print(i + '\n')
+            print(data)
+        except AttributeError : 
+            print(i + " doesnt work!")
 
         export_progressbar.step(1)
         root.update_idletasks()
@@ -245,10 +257,8 @@ interval_combobox.grid(row=1, column=0, padx=(5,20))
 period_combobox.grid(row=1, column=1, padx=(0,60))
 start_entry.grid(row=0, column=3)
 end_entry.grid(row=1, column=3)
-interval_combobox.bind('<<ComboboxSelected>>', lambda e: interval_combobox.selection_clear())
-interval_combobox.bind('<FocusOut>', lambda e: filter_periodbox())
+interval_combobox.bind('<<ComboboxSelected>>', lambda e: (interval_combobox.selection_clear(), filter_periodbox()))
 period_combobox.bind('<<ComboboxSelected>>', lambda e: period_combobox.selection_clear())
-period_combobox.bind('<FocusOut>', lambda e: filter_periodbox())
 start_entry.bind('<FocusIn>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
 end_entry.bind('<FocusIn>', lambda f: entry_default_text(end_value, 'YYYY-MM-DD'))
 start_entry.bind('<FocusOut>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
