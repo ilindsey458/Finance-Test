@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import tkinter as tk
+import os
 from tkinter import ttk
 import sqlite3
 import sv_ttk
@@ -54,6 +55,10 @@ def toggle_recovery() :
     else :
         recovery_spinbox.config(state=tk.DISABLED)
 
+def filter_periodbox() :
+    if (interval_combobox.get() in ['1m', '2m', '5m', '15m', '30m', '1hr', '90m']) :
+        period_combobox.set('1d')
+
 #  INFO: CALCULATION CONTROLLER
 def run_calculations(input_dataframe) :
     calc_choice = calculation_combobox.get()        #  HACK: Currently only accepts 1 calculation selection
@@ -91,14 +96,19 @@ def cumulative_drop_calc(input_dataframe) :
         recovery_list = list()
         for i in [x for x in calc['drop_list_index'] if x == x] :     #  NOTE: (if x==x) : removes NaN values
             start_value = input_dataframe.iat[int(i) - 3, 4]    #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
-            recovery_goal = start_value * (float(recovery_spinbox.get()) / 100)
-            recovery_index = input_dataframe.iloc[int(i)+1:, 4].cummax().ge(recovery_goal).idxmax()  
+            recovery_goal = start_value * (float(recovery_spinbox.get()) / 100.0)
+
+            if (int(i) != len(input_dataframe.index) - 1) :         #  NOTE: Catch edge case of drop index being at last index
+                recovery_index = input_dataframe.iloc[int(i)+1:, 4].cummax().ge(recovery_goal).idxmax()  
+            else :
+                recovery_index = int(i - 1)
+
             if (input_dataframe.iat[recovery_index, 4] >= recovery_goal) :  #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
-                recovery_list.append(input_dataframe.iat[recovery_index, 0])
+                recovery_list.append(str(input_dataframe.iat[recovery_index, 0]))
             else :
                 recovery_list.append('NO RECOVERY FOUND')
+
         input_dataframe['Recovery'] = pd.Series(recovery_list)
-            
 
 
 #  INFO: FILE EXPORTING
@@ -108,17 +118,28 @@ def export_output() :
 
     if (xlsx_check.get() == True) : excel_writer = pd.ExcelWriter('output.xlsx')
 
+    if (text_check.get() == True) :
+        try :
+            os.remove('output.txt')
+        except OSError :
+            pass
+
     #  INFO: TICKER INFO REQUEST
-    for i in selected_tickers :
+    for i in sorted(selected_tickers) :
         #  TODO: Option for Start/End manual entry
-        data = yf.Ticker(i.replace('.','-')).history(  #  NOTE: i.replace('.','-') : YFinance uses - instead of . in ticker name
-                     period=period_combobox.get(), interval=interval_combobox.get(), actions=False, rounding=True)
+        if (start_entry.get() == 'YYYY-MM-DD' and end_entry.get() == 'YYYY-MM-DD') :
+            data = yf.Ticker(i.replace('.','-')).history(  #  NOTE: i.replace('.','-') : YFinance uses - instead of . in ticker name
+                         interval=interval_combobox.get(), period=period_combobox.get(), actions=False, rounding=True)
+        elif (start_entry.get() != '' and end_entry.get() != '') :
+            data = yf.Ticker(i.replace('.','-')).history(
+                        interval=interval_combobox.get(), start=start_entry.get(), end=end_entry.get(), actions=False, rounding=True)
 
         #  INFO: DATA TRIMMING
         data.drop(columns='Volume', inplace=True)
         data.reset_index(inplace=True)
         data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
         run_calculations(data)
+        print(i + '\n')
         print(data)
 
         export_progressbar.step(1)
@@ -131,7 +152,9 @@ def export_output() :
         if(xlsx_check.get() == True) :
             data.to_excel(excel_writer, sheet_name=i, index=False)
 
-        # if (text_check.get() == True) :
+        if (text_check.get() == True) :
+            with open('output.txt', 'a') as f:
+                print(i + '\n' + data.to_string() + '\n', file=f)
 
 
     if (xlsx_check.get() == True) : excel_writer.close()
@@ -223,12 +246,13 @@ period_combobox.grid(row=1, column=1, padx=(0,60))
 start_entry.grid(row=0, column=3)
 end_entry.grid(row=1, column=3)
 interval_combobox.bind('<<ComboboxSelected>>', lambda e: interval_combobox.selection_clear())
+interval_combobox.bind('<FocusOut>', lambda e: filter_periodbox())
 period_combobox.bind('<<ComboboxSelected>>', lambda e: period_combobox.selection_clear())
+period_combobox.bind('<FocusOut>', lambda e: filter_periodbox())
 start_entry.bind('<FocusIn>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
 end_entry.bind('<FocusIn>', lambda f: entry_default_text(end_value, 'YYYY-MM-DD'))
 start_entry.bind('<FocusOut>', lambda f: entry_default_text(start_value, 'YYYY-MM-DD'))
 end_entry.bind('<FocusOut>', lambda f: entry_default_text(end_value, 'YYYY-MM-DD'))
-#  TODO: START / END disable by default
 
 #  INFO: GUI : Calculation selection and options
 calculation_label = ttk.Label(calculation_frame, text='Calculation')
