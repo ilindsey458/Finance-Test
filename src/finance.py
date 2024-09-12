@@ -23,7 +23,7 @@ def get_tickers():
 #  INFO: GENERAL GUI FUNCTIONS
 
 def filter_list(input_list, input_filter) :
-    drop_calc_list = [x for x in input_list if x.startswith(input_filter)]
+    drop_calc_list = [x for x in input_list if x.startswith(input_filter)] #  FIX: DROP CALC LIST HARD CODED
     update_listbox(drop_calc_list, tickers_search_tree)
 
 def add_tickers() :
@@ -37,7 +37,7 @@ def sub_tickers() :
         selected_tickers.remove(str(tickers_selected_tree.item(each)['text']))
     update_listbox(selected_tickers, tickers_selected_tree)
 
-def update_listbox(input_list, input_listbox) :
+def update_listbox(input_list, input_listbox) :     #  FIX: NO LONGER USING LIST BOXES 
     input_listbox.delete(*input_listbox.get_children())
     for i in sorted(input_list) :
         input_listbox.insert('', 'end', text=i)
@@ -49,13 +49,13 @@ def entry_default_text(input_strvar, input_text) :
     elif (input_strvar.get() == input_text) :
         input_strvar.set('')
 
-def toggle_recovery() :
+def toggle_recovery() :         #  FIX: Probably unnecessary 
     if (recovery_check.get() == True) :
         recovery_spinbox.config(state=tk.NORMAL)
     else :
         recovery_spinbox.config(state=tk.DISABLED)
 
-def filter_periodbox() :
+def filter_periodbox() :        #  FIX: Should utilize filter function
     if (interval_combobox.get() == '1m') :
         period_combobox.set('')
         period_combobox['values'] = ['1d']
@@ -74,9 +74,26 @@ def run_calculations(input_dataframe) :
     if (calc_choice == 'Consecutive Drop %') :
         cumulative_drop_calc(input_dataframe)
 
+def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
+    recovery_list = list()
+    for i in [x for x in calc['drop_list_index'] if x == x] :     #  NOTE: (if x==x) : removes NaN values
+        start_value = input_dataframe.iat[int(i) - 3, 4]    #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
+        recovery_goal = start_value * (float(recovery_spinbox.get()) / 100.0)
+
+        if (int(i) != len(input_dataframe.index) - 1) :         #  NOTE: Catch edge case of drop index being at last index
+            recovery_index = input_dataframe.iloc[int(i)+1:, 4].cummax().ge(recovery_goal).idxmax()  
+        else :
+            recovery_index = int(i - 1)
+
+        if (input_dataframe.iat[recovery_index, 4] >= recovery_goal) :  #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
+            recovery_list.append(str(input_dataframe.iat[recovery_index, 0]))
+        else :
+            recovery_list.append('NO RECOVERY FOUND')
+
+    input_dataframe['Recovery'] = pd.Series(recovery_list)
 
 #  INFO: CUMULATIVE DROP CALCULATION
-def cumulative_drop_calc(input_dataframe) :
+def cumulative_drop_calc(input_dataframe) :         #  FIX: WAY TOO MANY THINGS IN ONE FUNCTION
 
     #  TODO: This could be cleaner and more readable
     calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
@@ -102,81 +119,70 @@ def cumulative_drop_calc(input_dataframe) :
 
     #  INFO: OPTIONAL RECOVERY CALCULATION
     if (recovery_check.get() == True) :
-        recovery_list = list()
-        for i in [x for x in calc['drop_list_index'] if x == x] :     #  NOTE: (if x==x) : removes NaN values
-            start_value = input_dataframe.iat[int(i) - 3, 4]    #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
-            recovery_goal = start_value * (float(recovery_spinbox.get()) / 100.0)
+        recovery_calc(
 
-            if (int(i) != len(input_dataframe.index) - 1) :         #  NOTE: Catch edge case of drop index being at last index
-                recovery_index = input_dataframe.iloc[int(i)+1:, 4].cummax().ge(recovery_goal).idxmax()  
-            else :
-                recovery_index = int(i - 1)
+def get_ticker(input_ticker_name) :
+    try :
+        if (start_entry.get() == 'YYYY-MM-DD' and end_entry.get() == 'YYYY-MM-DD') :
+            data = yf.Ticker(input_ticker_name.replace('.','-')).history(  #  NOTE: input_name.replace('.','-') : YFinance uses - instead of . in ticker name
+                         interval=interval_combobox.get(), period=period_combobox.get(), actions=False, rounding=True)
+        elif (start_entry.get() != '' and end_entry.get() != '') :
+            data = yf.Ticker(input_ticker_name.replace('.','-')).history(
+                        interval=interval_combobox.get(), start=start_entry.get(), end=end_entry.get(), actions=False, rounding=True)
+        data.drop(columns='Volume', inplace=True)
+        data.reset_index(inplace=True)
+        data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
+    except AttributeError : 
+        print(i + " did'nt work!")
 
-            if (input_dataframe.iat[recovery_index, 4] >= recovery_goal) :  #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
-                recovery_list.append(str(input_dataframe.iat[recovery_index, 0]))
-            else :
-                recovery_list.append('NO RECOVERY FOUND')
+    return data
 
-        input_dataframe['Recovery'] = pd.Series(recovery_list)
+def export_database(input_ticker) :
+    #  INFO: SQLite INIT
+    conn = sqlite3.connect('output.db')
+    cursor = conn.cursor()
 
+    input_ticker.to_sql(i, conn, schema=None, if_exists='replace', index=False)
+
+def export_excel(input_ticker) :
+    excel_writer = pd.ExcelWriter('output.xlsx')
+    input_ticker.to_excel(excel_writer, sheet_name=i, index=False)
+    excel_writer.close()
+
+def export_text(input_ticker) :
+    try :
+        os.remove('output.txt')
+    except OSError :
+        pass
+
+    with open('output.txt', 'a') as f:
+        print(i + '\n' + input_ticker.to_string() + '\n', file=f)
 
 #  INFO: FILE EXPORTING
 def export_output() :
-    export_progressbar.configure(maximum=(len(selected_tickers) + 0.001))
+    export_progressbar.configure(maximum=(len(selected_tickers) + 0.01))
     export_progressbar['value'] = 0
-
-    if (xlsx_check.get() == True) : excel_writer = pd.ExcelWriter('output.xlsx')
-
-    if (text_check.get() == True) :
-        try :
-            os.remove('output.txt')
-        except OSError :
-            pass
 
     #  INFO: TICKER INFO REQUEST
     for i in sorted(selected_tickers) :
-        #  TODO: Option for Start/End manual entry
-        try :
-            if (start_entry.get() == 'YYYY-MM-DD' and end_entry.get() == 'YYYY-MM-DD') :
-                data = yf.Ticker(i.replace('.','-')).history(  #  NOTE: i.replace('.','-') : YFinance uses - instead of . in ticker name
-                             interval=interval_combobox.get(), period=period_combobox.get(), actions=False, rounding=True)
-            elif (start_entry.get() != '' and end_entry.get() != '') :
-                data = yf.Ticker(i.replace('.','-')).history(
-                            interval=interval_combobox.get(), start=start_entry.get(), end=end_entry.get(), actions=False, rounding=True)
-
-            #  INFO: DATA TRIMMING
-            data.drop(columns='Volume', inplace=True)
-            data.reset_index(inplace=True)
-            data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
-            run_calculations(data)
-            print(i + '\n')
-            print(data)
-        except AttributeError : 
-            print(i + " doesnt work!")
+        ticker_info = get_ticker(i)
+        run_calculations(ticker_info)
 
         export_progressbar.step(1)
         root.update_idletasks()
 
         #  INFO: EXPORT FILE TYPE CHECKS
         if (db_check.get() == True) :
-            data.to_sql(i, conn, schema=None, if_exists='replace', index=False)
+            export_database(ticker_info)
 
         if(xlsx_check.get() == True) :
-            data.to_excel(excel_writer, sheet_name=i, index=False)
+            export_excel(ticker_info)
 
         if (text_check.get() == True) :
-            with open('output.txt', 'a') as f:
-                print(i + '\n' + data.to_string() + '\n', file=f)
+            export_text(ticker_info)
 
 
-    if (xlsx_check.get() == True) : excel_writer.close()
-
-
-#  INFO: SQLite INIT
-conn = sqlite3.connect('output.db')
-cursor = conn.cursor()
-
-#  INFO: YFinance values
+#  INFO: YFINANCE PREDEFINED VALUES
 selected_tickers = set()
 interval_values = ['1m', '2m', '5m', '15m', '30m', '1h', '90m', '1d', '5d', '1wk', '1mo', '3mo']
 period_values = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'YTD', 'MAX']
