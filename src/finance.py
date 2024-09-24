@@ -9,13 +9,13 @@ import sv_ttk
 #  INFO: CREATES AN EXCEL FILE CONTAINING SP500 TICKERS ON FIRST CALL THEN REFS IT FOR FOLLOWING CALLS
 def get_tickers():
     try:
-        with open('tickers.xlsx', 'rb') as file :
-            tickers = pd.read_excel(file, index_col=0, engine='openpyxl')
+        with open('tickers.csv', 'rb') as file :
+            tickers = pd.read_csv(file, index_col=0)
             file.close()
 
     except FileNotFoundError:
         tickers = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-        tickers['Symbol'].to_excel('tickers.xlsx')
+        tickers['Symbol'].to_csv('tickers.csv')
 
     return tickers['Symbol'].convert_dtypes(convert_string=True).tolist()
 
@@ -74,6 +74,15 @@ def run_calculations(input_dataframe) :
     if (calc_choice == 'Consecutive Drop %') :
         cumulative_drop_calc(input_dataframe)
 
+def find_drops(input_dataframe, input_min_drop = 0) -> list :
+    try :
+        drop_check = pd.Series(input_dataframe['Close'].diff().lt(input_min_drop).to_list())
+        drop_length = pd.Series(drop_check.groupby((~drop_check).cumsum()).cumsum().to_list())
+        drop_list = drop_length.diff().le(-3)
+        print(drop_list.index[drop_list == True].to_list())     #  TODO: RETURN INSTEAD OF PRINTING
+    except KeyError :
+        print('Error getting data from ticker info during drop calculation')
+
 def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
     recovery_list = list()
     for i in [x for x in calc['drop_list_index'] if x == x] :     #  NOTE: (if x==x) : removes NaN values
@@ -95,31 +104,31 @@ def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
 #  INFO: CUMULATIVE DROP CALCULATION
 def cumulative_drop_calc(input_dataframe) :         #  FIX: WAY TOO MANY THINGS IN ONE FUNCTION
 
-    #  TODO: This could be cleaner and more readable
-    calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
-    calc['is_lt'] = input_dataframe['Close'].diff().lt(0)           #  WARN: .lt(0) : detects any downward change in price with no minimum req
-    dif_check = calc['is_lt'].cumsum().where(calc['is_lt'], 0).eq(0)
-    calc['cumul_sum'] = dif_check.groupby(dif_check.cumsum()).cumcount()
-    calc['drop_list_index'] = pd.Series(calc.loc[calc['cumul_sum'] == 3].index)  #  FIX: 3 is hard coded for third consecutive drop, also ignores further drops
-
-    diff_list = list()
-    for i in [x for x in calc['drop_list_index'] if x == x] :         #  NOTE: (if x==x) : removes NaN values
-        diff_list.append(1 - (1 / pow(input_dataframe.at[i-3, 'Close'] / input_dataframe.at[i, 'Close'], 1/3)))
-    calc['diff'] = pd.Series(data=diff_list)
-
-    drop_calc_list = list()
-    for i in range(len(diff_list)) :
-        drop_datetime = str(input_dataframe.loc[calc.at[i, 'drop_list_index']].iat[0])
-        if interval_combobox.get() in ['1d', '5d', '1wk', '1mo', '3mo'] :
-            drop_datetime = drop_datetime[:drop_datetime.rfind(' 00:00:00')]        #  NOTE: strips unnecessary time info if [period >= 1d]
-        drop_amount = calc.at[i, 'diff'].round(5)
-        drop_calc_list.append(str(drop_datetime) + ' / ' + str(drop_amount))
-
-    input_dataframe['Cumulative Drop %'] = pd.Series(drop_calc_list)
-
-    #  INFO: OPTIONAL RECOVERY CALCULATION
-    if (recovery_check.get() == True) :
-        recovery_calc(
+    find_drops(input_dataframe)
+    # calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
+    # calc['is_lt'] = input_dataframe['Close'].diff().lt(0)           #  WARN: .lt(0) : detects any downward change in price with no minimum req
+    # dif_check = calc['is_lt'].cumsum().where(calc['is_lt'], 0).eq(0)
+    # calc['cumul_sum'] = dif_check.groupby(dif_check.cumsum()).cumcount()
+    # calc['drop_list_index'] = pd.Series(calc.loc[calc['cumul_sum'] == 3].index)  #  FIX: 3 is hard coded for third consecutive drop, also ignores further drops
+    #
+    # diff_list = list()
+    # for i in [x for x in calc['drop_list_index'] if x == x] :         #  NOTE: (if x==x) : removes NaN values
+    #     diff_list.append(1 - (1 / pow(input_dataframe.at[i-3, 'Close'] / input_dataframe.at[i, 'Close'], 1/3)))
+    # calc['diff'] = pd.Series(data=diff_list)
+    #
+    # drop_calc_list = list()
+    # for i in range(len(diff_list)) :
+    #     drop_datetime = str(input_dataframe.loc[calc.at[i, 'drop_list_index']].iat[0])
+    #     if interval_combobox.get() in ['1d', '5d', '1wk', '1mo', '3mo'] :
+    #         drop_datetime = drop_datetime[:drop_datetime.rfind(' 00:00:00')]        #  NOTE: strips unnecessary time info if [period >= 1d]
+    #     drop_amount = calc.at[i, 'diff'].round(5)
+    #     drop_calc_list.append(str(drop_datetime) + ' / ' + str(drop_amount))
+    #
+    # input_dataframe['Cumulative Drop %'] = pd.Series(drop_calc_list)
+    #
+    # #  INFO: OPTIONAL RECOVERY CALCULATION
+    # if (recovery_check.get() == True) :
+    #     recovery_calc(
 
 def get_ticker(input_ticker_name) :
     try :
@@ -166,6 +175,7 @@ def export_output() :
     #  INFO: TICKER INFO REQUEST
     for i in sorted(selected_tickers) :
         ticker_info = get_ticker(i)
+        print(ticker_info)
         run_calculations(ticker_info)
 
         export_progressbar.step(1)
