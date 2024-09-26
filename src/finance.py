@@ -74,13 +74,17 @@ def run_calculations(input_dataframe) :
     if (calc_choice == 'Consecutive Drop %') :
         cumulative_drop_calc(input_dataframe)
 
-def find_drops(input_dataframe, input_min_drop = 0) -> list :
+def find_drops(input_dataframe, input_min_drop = 0) -> dict :
     try :
         drop_check = pd.Series(input_dataframe['Close'].diff().lt(input_min_drop).to_list())
         drop_length = pd.Series(drop_check.groupby((~drop_check).cumsum()).cumsum().to_list())
         drop_list = drop_length.diff().le(-3)
-        print(drop_list.index[drop_list == True].to_list())     #  TODO: RETURN INSTEAD OF PRINTING
-    except KeyError :
+        output_dict = dict()
+        for i in range(len(drop_list)) :
+            if drop_list[i] == True :
+                output_dict.update({i : int(drop_length[i-1])})
+        return output_dict
+   except KeyError :
         print('Error getting data from ticker info during drop calculation')
 
 def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
