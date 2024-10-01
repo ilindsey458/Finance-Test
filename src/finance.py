@@ -49,13 +49,13 @@ def entry_default_text(input_strvar, input_text) :
     elif (input_strvar.get() == input_text) :
         input_strvar.set('')
 
-def toggle_recovery() :         #  FIX: Probably unnecessary 
+def toggle_recovery() :         #  HACK: Probably unnecessary 
     if (recovery_check.get() == True) :
         recovery_spinbox.config(state=tk.NORMAL)
     else :
         recovery_spinbox.config(state=tk.DISABLED)
 
-def filter_periodbox() :        #  FIX: Should utilize filter function
+def filter_periodbox() :        #  HACK: HORRIBLY WRITTEN
     if (interval_combobox.get() == '1m') :
         period_combobox.set('')
         period_combobox['values'] = ['1d']
@@ -75,17 +75,27 @@ def run_calculations(input_dataframe) :
         cumulative_drop_calc(input_dataframe)
 
 def find_drops(input_dataframe, input_min_drop = 0) -> dict :
-    try :
+    try :           #  TODO: This could be made more readable
         drop_check = pd.Series(input_dataframe['Close'].diff().lt(input_min_drop).to_list())
         drop_length = pd.Series(drop_check.groupby((~drop_check).cumsum()).cumsum().to_list())
         drop_list = drop_length.diff().le(-3)
         output_dict = dict()
         for i in range(len(drop_list)) :
             if drop_list[i] == True :
-                output_dict.update({i : int(drop_length[i-1])})
+                output_dict.update({i - 1 : int(drop_length[i-1])})
         return output_dict
-   except KeyError :
+
+    except KeyError :
         print('Error getting data from ticker info during drop calculation')
+
+def calculate_drops(input_dataframe, input_dict) :
+    for i in input_dict :       #  TODO: FINISH THIS !!!!!
+        drop_value = round( input_dataframe.at[i - input_dict[i], 'Close'] - input_dataframe.at[i, 'Close'], 2)
+        drop_percent = round( ( drop_value / input_dataframe.at[i - input_dict[i], 'Close'] ) * 100, 2)
+        # print(input_dataframe.at[i - input_dict[i], 'Close'], ' + ', input_dataframe.at[i, 'Close'])
+        print('$', drop_value, ' -> ', drop_percent, '%')
+        # print(i, ' - ', i - input_dict[i])
+
 
 def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
     recovery_list = list()
@@ -106,17 +116,19 @@ def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
     input_dataframe['Recovery'] = pd.Series(recovery_list)
 
 #  INFO: CUMULATIVE DROP CALCULATION
-def cumulative_drop_calc(input_dataframe) :         #  FIX: WAY TOO MANY THINGS IN ONE FUNCTION
+def cumulative_drop_calc(input_ticker_dataframe) :         #  FIX: WAY TOO MANY THINGS IN ONE FUNCTION
 
-    find_drops(input_dataframe)
+    drops = find_drops(input_ticker_dataframe)
+    print(drops)
+    calculate_drops(input_ticker_dataframe, drops)
     # calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
-    # calc['is_lt'] = input_dataframe['Close'].diff().lt(0)           #  WARN: .lt(0) : detects any downward change in price with no minimum req
+    # calc['is_lt'] = input_dataframe['Close'].diff().lt(0)
     # dif_check = calc['is_lt'].cumsum().where(calc['is_lt'], 0).eq(0)
     # calc['cumul_sum'] = dif_check.groupby(dif_check.cumsum()).cumcount()
-    # calc['drop_list_index'] = pd.Series(calc.loc[calc['cumul_sum'] == 3].index)  #  FIX: 3 is hard coded for third consecutive drop, also ignores further drops
+    # calc['drop_list_index'] = pd.Series(calc.loc[calc['cumul_sum'] == 3].index)
     #
     # diff_list = list()
-    # for i in [x for x in calc['drop_list_index'] if x == x] :         #  NOTE: (if x==x) : removes NaN values
+    # for i in [x for x in calc['drop_list_index'] if x == x] :
     #     diff_list.append(1 - (1 / pow(input_dataframe.at[i-3, 'Close'] / input_dataframe.at[i, 'Close'], 1/3)))
     # calc['diff'] = pd.Series(data=diff_list)
     #
