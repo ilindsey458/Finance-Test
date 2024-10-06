@@ -6,6 +6,19 @@ from tkinter import ttk
 import sqlite3
 import sv_ttk
 
+class drop_info :
+    def __init__(self) :
+        stock_ticker: str
+        start_date: str
+        end_date: str
+        drop_percent: float
+        drop_amount: float
+        drop_length: int
+    
+    def __str__(self) :
+        return f"{self.stock_ticker} : {self.start_date} --- ${self.drop_amount} / {self.drop_percent}% ---> {self.end_date}"
+
+
 #  INFO: CREATES AN EXCEL FILE CONTAINING SP500 TICKERS ON FIRST CALL THEN REFS IT FOR FOLLOWING CALLS
 def get_tickers():
     try:
@@ -89,12 +102,20 @@ def find_drops(input_dataframe, input_min_drop = 0) -> dict :
         print('Error getting data from ticker info during drop calculation')
 
 def calculate_drops(input_dataframe, input_dict) :
+    output_object = drop_info()
     for i in input_dict :       #  TODO: FINISH THIS !!!!!
-        drop_value = round( input_dataframe.at[i - input_dict[i], 'Close'] - input_dataframe.at[i, 'Close'], 2)
+        output_object.start_date = input_dataframe.iat[i - input_dict[i], 0]
+        output_object.end_date = input_dataframe.iat[i, 0]
+        drop_value = round( input_dataframe.at[i - input_dict[i], 'Close'] - input_dataframe.at[i, 'Close'], 3)
         drop_percent = round( ( drop_value / input_dataframe.at[i - input_dict[i], 'Close'] ) * 100, 2)
+        output_object.drop_amount = drop_value
+        output_object.drop_percent = drop_percent
+        output_object.stock_ticker = input_dataframe.name
+        print(output_object)
         # print(input_dataframe.at[i - input_dict[i], 'Close'], ' + ', input_dataframe.at[i, 'Close'])
-        print('$', drop_value, ' -> ', drop_percent, '%')
+        # print('$', drop_value, ' -> ', drop_percent, '%')
         # print(i, ' - ', i - input_dict[i])
+
 
 
 def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
@@ -116,10 +137,9 @@ def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
     input_dataframe['Recovery'] = pd.Series(recovery_list)
 
 #  INFO: CUMULATIVE DROP CALCULATION
-def cumulative_drop_calc(input_ticker_dataframe) :         #  FIX: WAY TOO MANY THINGS IN ONE FUNCTION
+def cumulative_drop_calc(input_ticker_dataframe) -> drop_info :    #  FIX: WAY TOO MANY THINGS IN ONE FUNCTION
 
     drops = find_drops(input_ticker_dataframe)
-    print(drops)
     calculate_drops(input_ticker_dataframe, drops)
     # calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
     # calc['is_lt'] = input_dataframe['Close'].diff().lt(0)
@@ -157,6 +177,7 @@ def get_ticker(input_ticker_name) :
         data.drop(columns='Volume', inplace=True)
         data.reset_index(inplace=True)
         data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
+        data.name = input_ticker_name
     except AttributeError : 
         print(i + " did'nt work!")
 
