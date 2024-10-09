@@ -14,9 +14,11 @@ class drop_info :
         drop_percent: float
         drop_amount: float
         drop_length: int
+        start_amount: float
+        end_amount: float
     
     def __str__(self) :
-        return f"{self.stock_ticker} : {self.start_date} --- ${self.drop_amount} / {self.drop_percent}% ---> {self.end_date}"
+        return f"{self.stock_ticker} : [{self.start_date} | {self.end_date}] --- ${self.drop_amount} / {self.drop_percent}% ---> {self.end_date}"
 
 
 #  INFO: CREATES AN EXCEL FILE CONTAINING SP500 TICKERS ON FIRST CALL THEN REFS IT FOR FOLLOWING CALLS
