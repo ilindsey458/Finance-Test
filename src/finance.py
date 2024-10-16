@@ -136,15 +136,21 @@ def store_drops(input_list) -> pd.DataFrame :
     return output_dataframe
 
 def recovery_calc(input_list, input_tickers_df, input_drops_df) -> pd.DataFrame :
-    recovery_index_list = list()
+    recovery_dates = list()
+    recovery_lengths = list()
     for i in input_list :
         start_index = input_tickers_df[input_tickers_df['Datetime'] == i.end_date].index.astype(int)[0]
         recovery_index = input_tickers_df.loc[start_index :, 'Close'].cummax().ge(i.start_amount).idxmax()
         if (start_index != recovery_index) :
-            recovery_index_list.append(input_tickers_df.at[recovery_index, 'Datetime'])
+            recovery_dates.append(input_tickers_df.at[recovery_index, 'Datetime'])
+            # recovery_lengths.append(input_tickers_df.at[recovery_index, 'Datetime'] - input_tickers_df.at[start_index, 'Datetime'])   # FOR GETTING RECOVERY LENGTH AS TIMESTAMP
+            recovery_lengths.append(recovery_index - start_index)
         else :
-            recovery_index_list.append(pd.NA)
-    input_drops_df['Recovery_Date'] = recovery_index_list
+            recovery_dates.append(pd.NA)
+            recovery_lengths.append(pd.NA)
+
+    input_drops_df['Recovery_Date'] = recovery_dates
+    input_drops_df['Recovery_Length'] = recovery_lengths
 
     return input_drops_df
 
@@ -169,11 +175,12 @@ def recovery_calc(input_list, input_tickers_df, input_drops_df) -> pd.DataFrame 
 
 #  INFO: CUMULATIVE DROP CALCULATION
 def cumulative_drop_calc(input_tickers_df) -> drop_info :
+    print(input_tickers_df.to_string())
     drop_locations = find_drops(input_tickers_df)
     drop_objects = calculate_drops(input_tickers_df, drop_locations)
     drops_dataframe = store_drops(drop_objects)
     drops_dataframe = recovery_calc(drop_objects, input_tickers_df, drops_dataframe)
-    print(drops_dataframe)
+    print(drops_dataframe.to_string())
 
 
     # calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
