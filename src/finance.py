@@ -18,7 +18,10 @@ class drop_info :
         end_amount: float
     
     def __str__(self) :
-        return f"{self.stock_ticker} : [{self.start_date} | {self.end_date}] --- ${self.drop_amount} / {self.drop_percent}% ---> {self.end_date}"
+        return f"{self.stock_ticker} : [{self.start_date} -> {self.end_date}] ${self.start_amount:.2f} --- ${self.drop_amount:.2f} / {self.drop_percent:.2f}% ---> ${self.end_amount:.2f}"
+
+    def test_func(self) :
+        return '{}: {}'.format(self.__class__.__name__, vars(self))
 
 
 #  INFO: CREATES AN EXCEL FILE CONTAINING SP500 TICKERS ON FIRST CALL THEN REFS IT FOR FOLLOWING CALLS
@@ -95,54 +98,84 @@ def find_drops(input_dataframe, input_min_drop = 0) -> dict :
         drop_length = pd.Series(drop_check.groupby((~drop_check).cumsum()).cumsum().to_list())
         drop_list = drop_length.diff().le(-3)
         output_dict = dict()
-        for i in range(len(drop_list)) :
-            if drop_list[i] == True :
-                output_dict.update({i - 1 : int(drop_length[i-1])})
+        if (len(drop_list) != 0) :
+            for i in range(len(drop_list)) :
+                if drop_list[i] == True :
+                    output_dict.update({i - 1 : int(drop_length[i-1])})
         return output_dict
 
     except KeyError :
         print('Error getting data from ticker info during drop calculation')
 
-def calculate_drops(input_dataframe, input_dict) :
-    output_object = drop_info()
-    for i in input_dict :       #  TODO: FINISH THIS !!!!!
-        output_object.start_date = input_dataframe.iat[i - input_dict[i], 0]
-        output_object.end_date = input_dataframe.iat[i, 0]
+def calculate_drops(input_dataframe, input_dict) -> list :
+    output_list = list()
+    for i in input_dict :
+        drop_object = drop_info()
         drop_value = round( input_dataframe.at[i - input_dict[i], 'Close'] - input_dataframe.at[i, 'Close'], 3)
         drop_percent = round( ( drop_value / input_dataframe.at[i - input_dict[i], 'Close'] ) * 100, 2)
-        output_object.drop_amount = drop_value
-        output_object.drop_percent = drop_percent
-        output_object.stock_ticker = input_dataframe.name
-        print(output_object)
-        # print(input_dataframe.at[i - input_dict[i], 'Close'], ' + ', input_dataframe.at[i, 'Close'])
-        # print('$', drop_value, ' -> ', drop_percent, '%')
-        # print(i, ' - ', i - input_dict[i])
+        
+        #  HACK: This could be done better / cleaner
+        drop_object.start_date = input_dataframe.iat[i - input_dict[i], 0]
+        drop_object.end_date = input_dataframe.iat[i, 0]
+        drop_object.start_amount = input_dataframe.at[i - input_dict[i], 'Close']
+        drop_object.end_amount = input_dataframe.at[i, 'Close']
+        drop_object.drop_amount = drop_value
+        drop_object.drop_percent = drop_percent
+        drop_object.stock_ticker = input_dataframe.name
+        
+        output_list.append(drop_object)
+    return output_list
 
+def store_drops(input_list) -> pd.DataFrame :
+    output_dataframe = pd.DataFrame.from_records(vars(o) for o in input_list)
+    output_dataframe = output_dataframe[['stock_ticker', 'start_date', 'end_date', 'start_amount', 'end_amount', 'drop_amount', 'drop_percent']]
+    output_dataframe['start_amount'] = output_dataframe['start_amount'].apply(lambda x: f'${x:.2f}')
+    output_dataframe['end_amount'] = output_dataframe['end_amount'].apply(lambda x: f'${x:.2f}')
+    output_dataframe['drop_amount'] = output_dataframe['drop_amount'].apply(lambda x: f'${x:.2f}')
+    output_dataframe['drop_percent'] = output_dataframe['drop_percent'].apply(lambda x: f'{x:.2f}%')
+    return output_dataframe
 
-
-def recovery_calc() :               #  FIX: THIS DOES NOT WORK AT ALL
-    recovery_list = list()
-    for i in [x for x in calc['drop_list_index'] if x == x] :     #  NOTE: (if x==x) : removes NaN values
-        start_value = input_dataframe.iat[int(i) - 3, 4]    #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
-        recovery_goal = start_value * (float(recovery_spinbox.get()) / 100.0)
-
-        if (int(i) != len(input_dataframe.index) - 1) :         #  NOTE: Catch edge case of drop index being at last index
-            recovery_index = input_dataframe.iloc[int(i)+1:, 4].cummax().ge(recovery_goal).idxmax()  
+def recovery_calc(input_list, input_tickers_df, input_drops_df) -> pd.DataFrame :
+    recovery_index_list = list()
+    for i in input_list :
+        start_index = input_tickers_df[input_tickers_df['Datetime'] == i.end_date].index.astype(int)[0]
+        recovery_index = input_tickers_df.loc[start_index :, 'Close'].cummax().ge(i.start_amount).idxmax()
+        if (start_index != recovery_index) :
+            recovery_index_list.append(input_tickers_df.at[recovery_index, 'Datetime'])
         else :
-            recovery_index = int(i - 1)
+            recovery_index_list.append(pd.NA)
+    input_drops_df['Recovery_Date'] = recovery_index_list
 
-        if (input_dataframe.iat[recovery_index, 4] >= recovery_goal) :  #  WARN: input_dataframe[column 4] hardcoded and assumed to be 'CLOSE'
-            recovery_list.append(str(input_dataframe.iat[recovery_index, 0]))
-        else :
-            recovery_list.append('NO RECOVERY FOUND')
+    return input_drops_df
 
-    input_dataframe['Recovery'] = pd.Series(recovery_list)
+# def store_recovery(input_recovery_list, input_dataframe) :
+
+    # recovery_list = list()
+    # for i in [x for x in calc['drop_list_index'] if x == x] :     #  NOTE: (if x==x) : removes NaN values
+    #     start_value = input_dataframe.at[int(i) - 3, 'Close']
+    #     recovery_goal = start_value * (float(recovery_spinbox.get()) / 100.0)
+    #
+    #     if (int(i) != len(input_dataframe.index) - 1) :         #  NOTE: Catch edge case of drop index being at last index
+    #         recovery_index = input_dataframe.loc[int(i)+1:, 'Close'].cummax().ge(recovery_goal).idxmax()  
+    #     else :
+    #         recovery_index = int(i - 1)
+    #
+    #     if (input_dataframe.iat[recovery_index, 'Close'] >= recovery_goal) :
+    #         recovery_list.append(str(input_dataframe.iat[recovery_index, 0]))
+    #     else :
+    #         recovery_list.append('NO RECOVERY FOUND')
+    #
+    # input_dataframe['Recovery'] = pd.Series(recovery_list)
 
 #  INFO: CUMULATIVE DROP CALCULATION
-def cumulative_drop_calc(input_ticker_dataframe) -> drop_info :    #  FIX: WAY TOO MANY THINGS IN ONE FUNCTION
+def cumulative_drop_calc(input_tickers_df) -> drop_info :
+    drop_locations = find_drops(input_tickers_df)
+    drop_objects = calculate_drops(input_tickers_df, drop_locations)
+    drops_dataframe = store_drops(drop_objects)
+    drops_dataframe = recovery_calc(drop_objects, input_tickers_df, drops_dataframe)
+    print(drops_dataframe)
 
-    drops = find_drops(input_ticker_dataframe)
-    calculate_drops(input_ticker_dataframe, drops)
+
     # calc = pd.DataFrame(columns=['is_lt', 'cumul_sum', 'drop_list_index', 'diff'])
     # calc['is_lt'] = input_dataframe['Close'].diff().lt(0)
     # dif_check = calc['is_lt'].cumsum().where(calc['is_lt'], 0).eq(0)
@@ -176,9 +209,13 @@ def get_ticker(input_ticker_name) :
         elif (start_entry.get() != '' and end_entry.get() != '') :
             data = yf.Ticker(input_ticker_name.replace('.','-')).history(
                         interval=interval_combobox.get(), start=start_entry.get(), end=end_entry.get(), actions=False, rounding=True)
-        data.drop(columns='Volume', inplace=True)
+        data.drop(columns=['Open', 'High', 'Low', 'Volume'], inplace=True)
         data.reset_index(inplace=True)
-        data[data.columns[0]] = data[data.columns[0]].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
+        data.rename(columns={1: 'Datetime'})
+        data['Datetime'] = data['Datetime'].dt.tz_localize(None)  #  NOTE: tz_localize(None) : removes unnecessary timezone information
+        # data[data.columns[0]] = pd.to_datetime(data[data.columns[0]])
+        if (interval_combobox.get() in ['1d', '5d', '1wk', '1mo', '3mo']) :
+            data['Datetime'] = data['Datetime'].dt.date
         data.name = input_ticker_name
     except AttributeError : 
         print(i + " did'nt work!")
@@ -214,7 +251,7 @@ def export_output() :
     #  INFO: TICKER INFO REQUEST
     for i in sorted(selected_tickers) :
         ticker_info = get_ticker(i)
-        print(ticker_info)
+        # print(ticker_info)
         run_calculations(ticker_info)
 
         export_progressbar.step(1)
